@@ -1,13 +1,10 @@
 import streamlit as st
-import tempfile
+import requests
+import base64
 import os
-import convertapi
 
 # --- KONFIGURASI API ---
-# Menggabungkan os.environ dan variabel module agar dijamin terbaca oleh library ConvertAPI
 API_SECRET = 'KT670n4yoAl3FSIicyM6UUZfyPHKcWWX'
-os.environ['CONVERT_API_SECRET'] = API_SECRET
-convertapi.api_secret = API_SECRET
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
@@ -18,7 +15,7 @@ st.set_page_config(
 
 # --- HEADER UI ---
 st.title("📄 DocConvert Pro")
-st.markdown("Konversi Dokumen Skala Enterprise dengan Fidelitas Tinggi (Powered by ConvertAPI)")
+st.markdown("Konversi Dokumen Skala Enterprise dengan Fidelitas Tinggi (Powered by Direct ConvertAPI)")
 st.divider()
 
 # --- UPLOADER UI ---
@@ -44,7 +41,6 @@ if uploaded_file is not None:
         
     download_filename = f"{base_name}_Converted.{target_format}"
 
-    # Menampilkan Status Deteksi
     st.info(f"Mendeteksi: File **{source_format.upper()}**. Akan dikonversi ke **{target_format.upper()}**.")
     
     # 2. Tombol Eksekusi
@@ -54,55 +50,53 @@ if uploaded_file is not None:
         status_text = st.empty()
         
         try:
-            status_text.text("Membaca file dari Memory (RAM)...")
+            status_text.text("Menyiapkan payload memori...")
             progress_bar.progress(20)
             
-            # --- SOLUSI ERROR: BYPASS HARD DRIVE ---
-            # Menggunakan UploadIO agar file dikirim langsung dari memory Streamlit ke API
-            upload_io = convertapi.UploadIO(uploaded_file, filename=filename)
+            # --- SOLUSI DEFINITIF: DIRECT REST API CALL ---
+            # Mengabaikan library ConvertAPI Python dan menembak langsung ke server mereka
+            url = f"https://v2.convertapi.com/convert/{source_format}/to/{target_format}?Secret={API_SECRET}"
             
-            status_text.text(f"Memproses Konversi {source_format.upper()} ke {target_format.upper()} via Cloud Engine...")
+            # Membungkus file langsung dari RAM tanpa menyentuh Hard Drive
+            files = {
+                'File': (filename, uploaded_file.getvalue())
+            }
+            
+            status_text.text(f"Mengunggah dan memproses {source_format.upper()} ke {target_format.upper()} di Cloud Engine...")
             progress_bar.progress(50)
             
-            # Eksekusi ConvertAPI dengan memaksa pengenalan format dari awal
-            result = convertapi.convert(
-                target_format, 
-                {'File': upload_io}, 
-                from_format=source_format
-            )
+            # Request ke API
+            response = requests.post(url, files=files)
             
-            status_text.text("Mengunduh hasil konversi...")
+            status_text.text("Menerima respon dari server...")
             progress_bar.progress(80)
             
-            # Simpan output sementara ke folder sistem operasi yang paling aman
-            out_dir = tempfile.mkdtemp()
-            output_path = os.path.join(out_dir, download_filename)
-            
-            result.file.save(output_path)
-            
-            # Membaca hasil konversi menjadi bytes untuk tombol Download Streamlit
-            with open(output_path, "rb") as f:
-                output_bytes = f.read()
+            # Cek jika respon sukses (HTTP 200 OK)
+            if response.status_code == 200:
+                data = response.json()
                 
-            # Cleanup temporary file & folder
-            os.remove(output_path)
-            os.rmdir(out_dir)
+                # API mengembalikan file dalam bentuk Base64 String, kita decode kembali menjadi Bytes
+                file_b64 = data['Files'][0]['FileData']
+                output_bytes = base64.b64decode(file_b64)
+                
+                progress_bar.progress(100)
+                status_text.text("Konversi Selesai!")
+                st.success("File Anda telah berhasil dikonversi dengan akurasi 100% dan siap diunduh.")
+                
+                # 3. Tombol Download Hasil Asli
+                st.download_button(
+                    label=f"⬇️ Download Hasil Konversi ({target_format.upper()})",
+                    data=output_bytes,
+                    file_name=download_filename,
+                    mime=mime_type,
+                    use_container_width=True
+                )
+            else:
+                # Jika API mengembalikan error spesifik
+                error_msg = response.json().get('Message', response.text)
+                st.error(f"Server ConvertAPI menolak request: {error_msg}")
+                progress_bar.progress(0)
             
-            progress_bar.progress(100)
-            status_text.text("Konversi Selesai!")
-            st.success("File Anda telah berhasil dikonversi dengan akurasi 100% dan siap diunduh.")
-            
-            # 3. Tombol Download Hasil Asli
-            st.download_button(
-                label=f"⬇️ Download Hasil Konversi ({target_format.upper()})",
-                data=output_bytes,
-                file_name=download_filename,
-                mime=mime_type,
-                use_container_width=True
-            )
-            
-        except convertapi.ApiError as e:
-            st.error(f"Terjadi kesalahan dari sisi ConvertAPI: {str(e)}")
         except Exception as e:
-            st.error(f"Terjadi kesalahan sistem: {str(e)}")
-            st.error("Silakan pastikan koneksi internet stabil dan coba kembali.")
+            st.error(f"Terjadi kesalahan koneksi sistem: {str(e)}")
+            progress_bar.progress(0)
