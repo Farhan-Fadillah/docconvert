@@ -4,8 +4,10 @@ import os
 import convertapi
 
 # --- KONFIGURASI API ---
-# Menggunakan API Key yang Anda sediakan
-convertapi.api_secret = 'KT670n4yoAl3FSIicyM6UUZfyPHKcWWX'
+# Menggabungkan os.environ dan variabel module agar dijamin terbaca oleh library ConvertAPI
+API_SECRET = 'KT670n4yoAl3FSIicyM6UUZfyPHKcWWX'
+os.environ['CONVERT_API_SECRET'] = API_SECRET
+convertapi.api_secret = API_SECRET
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
@@ -52,36 +54,39 @@ if uploaded_file is not None:
         status_text = st.empty()
         
         try:
-            status_text.text("Menyiapkan file untuk dikirim ke Cloud Engine...")
+            status_text.text("Membaca file dari Memory (RAM)...")
             progress_bar.progress(20)
             
-            # Simpan file upload ke temporary file agar bisa dibaca oleh ConvertAPI
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as tmp_input:
-                tmp_input.write(uploaded_file.getvalue())
-                input_path = tmp_input.name
-                
-            output_path = input_path.replace(f".{file_extension}", f".{target_format}")
+            # --- SOLUSI ERROR: BYPASS HARD DRIVE ---
+            # Menggunakan UploadIO agar file dikirim langsung dari memory Streamlit ke API
+            upload_io = convertapi.UploadIO(uploaded_file, filename=filename)
             
-            status_text.text(f"Memproses Konversi {source_format.upper()} ke {target_format.upper()} via ConvertAPI...")
+            status_text.text(f"Memproses Konversi {source_format.upper()} ke {target_format.upper()} via Cloud Engine...")
             progress_bar.progress(50)
             
-            # --- EKSEKUSI CONVERTAPI SUNGGUHAN ---
-            # Mengirim file ke server ConvertAPI dan menunggu hasilnya
-            result = convertapi.convert(target_format, {'File': input_path}, from_format=source_format)
+            # Eksekusi ConvertAPI dengan memaksa pengenalan format dari awal
+            result = convertapi.convert(
+                target_format, 
+                {'File': upload_io}, 
+                from_format=source_format
+            )
             
-            status_text.text("Mengunduh hasil dari Cloud Engine...")
+            status_text.text("Mengunduh hasil konversi...")
             progress_bar.progress(80)
             
-            # Menyimpan hasil dari ConvertAPI ke local sementara
+            # Simpan output sementara ke folder sistem operasi yang paling aman
+            out_dir = tempfile.mkdtemp()
+            output_path = os.path.join(out_dir, download_filename)
+            
             result.file.save(output_path)
             
             # Membaca hasil konversi menjadi bytes untuk tombol Download Streamlit
             with open(output_path, "rb") as f:
                 output_bytes = f.read()
                 
-            # Cleanup temporary files agar server tidak penuh
-            os.remove(input_path)
+            # Cleanup temporary file & folder
             os.remove(output_path)
+            os.rmdir(out_dir)
             
             progress_bar.progress(100)
             status_text.text("Konversi Selesai!")
@@ -100,3 +105,4 @@ if uploaded_file is not None:
             st.error(f"Terjadi kesalahan dari sisi ConvertAPI: {str(e)}")
         except Exception as e:
             st.error(f"Terjadi kesalahan sistem: {str(e)}")
+            st.error("Silakan pastikan koneksi internet stabil dan coba kembali.")
